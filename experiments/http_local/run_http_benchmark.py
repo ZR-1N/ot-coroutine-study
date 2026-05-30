@@ -1,40 +1,70 @@
 import asyncio
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import aiohttp
 import requests
+from requests.adapters import HTTPAdapter
 
 from experiments.common.metrics import BenchmarkResult, ProcessMonitor, result_to_dict
-from experiments.common.utils import append_results_csv
+from experiments.common.utils import write_results_csv
 
 
 URL = "http://127.0.0.1:8080/ping"
 TASK_COUNTS = [100, 1000, 3000]
 DELAYS_MS = [10, 50, 100]
-REPEATS = 3
+REPEATS = 5
 THREAD_WORKERS = 200
 
+_thread_local = threading.local()
 
-def sync_http_task(delay_ms: int, session: requests.Session) -> None:
+
+def get_thread_local_session() -> requests.Session:
+    if not hasattr(_thread_local, "session"):
+        session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=1,
+            pool_maxsize=1,
+            max_retries=0,
+            pool_block=True
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _thread_local.session = session
+    return _thread_local.session
+
+
+def sync_http_task(delay_ms: int) -> None:
+    session = get_thread_local_session()
     resp = session.get(URL, params={"delay_ms": delay_ms}, timeout=10)
     resp.raise_for_status()
 
 
-async def async_http_task(delay_ms: int, session: aiohttp.ClientSession) -> None:
-    async with session.get(URL, params={"delay_ms": delay_ms}, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-        if resp.status != 200:
-            raise RuntimeError(f"HTTP {resp.status}")
-        await resp.read()
+async def async_http_task(
+    delay_ms: int,
+    session: aiohttp.ClientSession,
+    semaphore: asyncio.Semaphore
+) -> None:
+    async with semaphore:
+        async with session.get(
+            URL,
+            params={"delay_ms": delay_ms},
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"HTTP {resp.status}")
+            await resp.read()
 
 
 def run_threadpool_http(task_count: int, delay_ms: int) -> tuple[float, float, float]:
     monitor = ProcessMonitor()
     monitor.start()
     start = time.perf_counter()
-    with requests.Session() as session:
-        with ThreadPoolExecutor(max_workers=THREAD_WORKERS) as pool:
-            list(pool.map(lambda _: sync_http_task(delay_ms, session), range(task_count)))
+
+    with ThreadPoolExecutor(max_workers=THREAD_WORKERS) as pool:
+        list(pool.map(lambda _: sync_http_task(delay_ms), range(task_count)))
+
     wall = time.perf_counter() - start
     monitor.stop()
     return wall, monitor.avg_cpu_percent, monitor.peak_rss_mb
@@ -44,8 +74,19 @@ async def run_async_http(task_count: int, delay_ms: int) -> tuple[float, float, 
     monitor = ProcessMonitor()
     monitor.start()
     start = time.perf_counter()
-    async with aiohttp.ClientSession() as session:
-        await asyncio.gather(*(async_http_task(delay_ms, session) for _ in range(task_count)))
+
+    connector = aiohttp.TCPConnector(
+        limit=THREAD_WORKERS,
+        limit_per_host=THREAD_WORKERS,
+        force_close=False
+    )
+    semaphore = asyncio.Semaphore(THREAD_WORKERS)
+
+    async with aiohttp.ClientSession(connector=connector) as session:
+        await asyncio.gather(
+            *(async_http_task(delay_ms, session, semaphore) for _ in range(task_count))
+        )
+
     wall = time.perf_counter() - start
     monitor.stop()
     return wall, monitor.avg_cpu_percent, monitor.peak_rss_mb
@@ -61,13 +102,14 @@ def main():
                     experiment="http_local",
                     model="threadpool_requests",
                     task_count=task_count,
-                    concurrency=THREAD_WORKERS,
+                    concurrency=min(task_count, THREAD_WORKERS),
                     delay_ms=delay_ms,
                     repeat_id=repeat_id,
                     wall_time_s=wall,
                     throughput_ops=task_count / wall,
                     avg_cpu_percent=cpu,
                     peak_rss_mb=rss,
+                    work_n=None,
                 )))
 
                 wall, cpu, rss = asyncio.run(run_async_http(task_count, delay_ms))
@@ -75,17 +117,22 @@ def main():
                     experiment="http_local",
                     model="asyncio_aiohttp",
                     task_count=task_count,
-                    concurrency=task_count,
+                    concurrency=min(task_count, THREAD_WORKERS),
                     delay_ms=delay_ms,
                     repeat_id=repeat_id,
                     wall_time_s=wall,
                     throughput_ops=task_count / wall,
                     avg_cpu_percent=cpu,
                     peak_rss_mb=rss,
+                    work_n=None,
                 )))
-                print(f"[http_local] repeat={repeat_id} delay={delay_ms}ms tasks={task_count} done")
 
-    append_results_csv("http_local_results.csv", rows)
+                print(
+                    f"[http_local] repeat={repeat_id} delay={delay_ms}ms "
+                    f"tasks={task_count} done"
+                )
+
+    write_results_csv("http_local_results.csv", rows)
 
 
 if __name__ == "__main__":

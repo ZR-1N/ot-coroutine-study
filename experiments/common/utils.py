@@ -17,3 +17,9 @@ def append_results_csv(filename: str, rows: list[dict]) -> None:
         old = pd.read_csv(path)
         df = pd.concat([old, df], ignore_index=True)
     df.to_csv(path, index=False, encoding="utf-8-sig")
+
+
+def write_results_csv(filename: str, rows: list[dict]) -> None:
+    path = RAW_DIR / filename
+    df = pd.DataFrame(rows)
+    df.to_csv(path, index=False, encoding="utf-8-sig")

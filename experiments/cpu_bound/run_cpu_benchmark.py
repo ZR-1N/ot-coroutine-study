@@ -3,12 +3,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from experiments.common.metrics import BenchmarkResult, ProcessMonitor, result_to_dict
-from experiments.common.utils import append_results_csv
+from experiments.common.utils import write_results_csv
 
 
 TASK_COUNTS = [10, 50, 100]
 WORK_N = [200000, 500000, 1000000]
-REPEATS = 3
+REPEATS = 5
 THREAD_WORKERS = 8
 
 
@@ -27,8 +27,10 @@ def run_single(task_count: int, n: int) -> tuple[float, float, float]:
     monitor = ProcessMonitor()
     monitor.start()
     start = time.perf_counter()
+
     for _ in range(task_count):
         cpu_task(n)
+
     wall = time.perf_counter() - start
     monitor.stop()
     return wall, monitor.avg_cpu_percent, monitor.peak_rss_mb
@@ -38,8 +40,10 @@ def run_threadpool(task_count: int, n: int) -> tuple[float, float, float]:
     monitor = ProcessMonitor()
     monitor.start()
     start = time.perf_counter()
+
     with ThreadPoolExecutor(max_workers=THREAD_WORKERS) as pool:
         list(pool.map(lambda _: cpu_task(n), range(task_count)))
+
     wall = time.perf_counter() - start
     monitor.stop()
     return wall, monitor.avg_cpu_percent, monitor.peak_rss_mb
@@ -49,7 +53,9 @@ async def run_asyncio(task_count: int, n: int) -> tuple[float, float, float]:
     monitor = ProcessMonitor()
     monitor.start()
     start = time.perf_counter()
+
     await asyncio.gather(*(fake_async_cpu_task(n) for _ in range(task_count)))
+
     wall = time.perf_counter() - start
     monitor.stop()
     return wall, monitor.avg_cpu_percent, monitor.peak_rss_mb
@@ -72,6 +78,7 @@ def main():
                     throughput_ops=task_count / wall,
                     avg_cpu_percent=cpu,
                     peak_rss_mb=rss,
+                    work_n=n,
                 )))
 
                 wall, cpu, rss = run_threadpool(task_count, n)
@@ -79,13 +86,14 @@ def main():
                     experiment="cpu_bound",
                     model="threadpool",
                     task_count=task_count,
-                    concurrency=THREAD_WORKERS,
+                    concurrency=min(task_count, THREAD_WORKERS),
                     delay_ms=0,
                     repeat_id=repeat_id,
                     wall_time_s=wall,
                     throughput_ops=task_count / wall,
                     avg_cpu_percent=cpu,
                     peak_rss_mb=rss,
+                    work_n=n,
                 )))
 
                 wall, cpu, rss = asyncio.run(run_asyncio(task_count, n))
@@ -93,17 +101,22 @@ def main():
                     experiment="cpu_bound",
                     model="asyncio",
                     task_count=task_count,
-                    concurrency=task_count,
+                    concurrency=1,
                     delay_ms=0,
                     repeat_id=repeat_id,
                     wall_time_s=wall,
                     throughput_ops=task_count / wall,
                     avg_cpu_percent=cpu,
                     peak_rss_mb=rss,
+                    work_n=n,
                 )))
-                print(f"[cpu_bound] repeat={repeat_id} n={n} tasks={task_count} done")
 
-    append_results_csv("cpu_bound_results.csv", rows)
+                print(
+                    f"[cpu_bound] repeat={repeat_id} work_n={n} "
+                    f"tasks={task_count} done"
+                )
+
+    write_results_csv("cpu_bound_results.csv", rows)
 
 
 if __name__ == "__main__":

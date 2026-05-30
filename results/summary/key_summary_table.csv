@@ -1,0 +1,10 @@
+﻿experiment,scenario,task_count,asyncio_wall_time_s,baseline_wall_time_s,speedup_or_ratio,note
+sleep_io,10 ms,10000,0.125365,0.473125,3.774,asyncio vs threadpool
+sleep_io,50 ms,10000,0.149345,1.764392,11.814,asyncio vs threadpool
+sleep_io,100 ms,10000,0.191079,3.451139,18.061,asyncio vs threadpool
+http_local,10 ms,3000,0.364061,2.084246,5.725,asyncio vs threadpool
+http_local,50 ms,3000,1.082343,2.166355,2.002,asyncio vs threadpool
+http_local,100 ms,3000,1.872805,2.451246,1.309,asyncio vs threadpool
+cpu_bound,work_n=200000,100,1.054863,1.030811,1.023,ratio to single (closer to 1 means similar)
+cpu_bound,work_n=500000,100,2.617341,2.654353,0.986,ratio to single (closer to 1 means similar)
+cpu_bound,work_n=1000000,100,5.18482,5.226731,0.992,ratio to single (closer to 1 means similar)

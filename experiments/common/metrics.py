@@ -2,6 +2,7 @@ import os
 import time
 import threading
 from dataclasses import dataclass, asdict
+from typing import Optional
 
 import psutil
 
@@ -18,10 +19,11 @@ class BenchmarkResult:
     throughput_ops: float
     avg_cpu_percent: float
     peak_rss_mb: float
+    work_n: Optional[int] = None
 
 
 class ProcessMonitor:
-    def __init__(self, interval: float = 0.05):
+    def __init__(self, interval: float = 0.02):
         self.interval = interval
         self.process = psutil.Process(os.getpid())
         self._running = False
